@@ -1,0 +1,15 @@
+[package]
+name = "flaga"
+version = "0.1.0"
+edition = "2024"
+
+license = "MIT OR Apache-2.0"
+description = "Flag management engine with support for binary, hex, and enum flags, event triggering, and persistent flag schemas."
+
+authors = ["James Hunt <jameshuntdevelopment@gmail.com>"]
+repository = "https://github.com/jameshuntt/flaga"
+
+keywords = ["flags", "bitflags", "state", "event", "binary"]
+categories = ["config", "data-structures", "parser-implementations"]
+
+[dependencies]
