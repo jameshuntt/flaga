@@ -1,140 +1,119 @@
+
 use crate::{
     error::FlagError,
     flag_descriptor::FlagDescriptor,
-    flag_type::FlagType
+    flag_store::FlagStore,
+    flag_type::FlagType,
+    state::Inner,
 };
+#[cfg(feature = "logging")]
+use log::info;
 use std::{
     collections::HashMap,
-    path::{Path, PathBuf},
-    sync::{Arc, RwLock}
-};
-use {
-    log::info,
-    serde::{Serialize, Deserialize}
+    sync::{Arc, RwLock},
 };
 
-// --- Data Structures ---
-
-/// The thread-safe state container for flags and their definitions.
-/// 
-/// This is the "Single Source of Truth." By housing the bitmasks and the 
-/// flag definitions together, we ensure that updates to flag values 
-/// are always synchronized with their type-metadata.
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
-pub(crate) struct Inner {
-    /// 8-bit mask for binary/boolean logic.
-    pub(crate) binary_flags: u8,
-    /// 64-bit mask for complex or large hex-based flags.
-    pub(crate) hex_flags: u64,
-    /// 8-bit mask reserved for enumerable state flags.
-    pub(crate) enum_flags: u8,
-    /// A registry of flag names and their associated descriptors.
-    pub(crate) flags: HashMap<String, FlagDescriptor<u64>>,
-}
-
-/// A private helper struct used to define the disk-persisted format of [`FlagManager`].
-/// 
-/// Since `Arc<RwLock<T>>` does not implement `Serialize`/`Deserialize` by default,
-/// this "Shadow" struct acts as a snapshot of the manager's data without the 
-/// synchronization primitives.
-#[derive(Serialize, Deserialize)]
-struct FlagManagerShadow {
-    state: Inner,
-    file_path: Option<PathBuf>,
-    file_extension_flags: HashMap<String, Vec<FlagDescriptor<u64>>>,
-    extension_flags: HashMap<String, Vec<String>>,
-}
-
-/// A thread-safe coordinator for binary, hex, and enum-based flags.
-///
-/// `FlagManager` enables shared ownership across threads via `Arc` and 
-/// fine-grained access control via `RwLock`. It supports dynamic flag 
-/// registration, bitwise state manipulation, and file-based persistence.
 #[derive(Debug, Clone)]
 pub struct FlagManager {
-    /// The synchronized internal state.
     pub(crate) state: Arc<RwLock<Inner>>,
-    /// The default file path used for [`Self::sync_to_disk`].
-    pub(crate) file_path: Option<PathBuf>,
-    /// Mappings of file extensions to specific flag descriptors.
     pub(crate) file_extension_flags: HashMap<String, Vec<FlagDescriptor<u64>>>,
-    /// Mappings of file extensions to lists of flag names.
     pub(crate) extension_flags: HashMap<String, Vec<String>>,
+    pub(crate) store: Option<Arc<dyn FlagStore>>,
 }
 
-// --- Trait Implementations ---
-
-impl Serialize for FlagManager {
-    /// Serializes the manager by taking a read-lock snapshot of the current state.
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where S: serde::Serializer 
-    {
-        // Lock the state for a moment to take a snapshot for saving
-        let inner = self.state.read().map_err(serde::ser::Error::custom)?;
-        let shadow = FlagManagerShadow {
-            state: inner.clone(),
-            file_path: self.file_path.clone(),
-            file_extension_flags: self.file_extension_flags.clone(),
-            extension_flags: self.extension_flags.clone(),
-        };
-        shadow.serialize(serializer)
+impl Default for FlagManager {
+    fn default() -> Self {
+        Self::new()
     }
 }
-
-impl<'de> Deserialize<'de> for FlagManager {
-    /// Deserializes the manager and re-establishes the internal `RwLock`.
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where D: serde::Deserializer<'de> 
-    {
-        let shadow = FlagManagerShadow::deserialize(deserializer)?;
-        Ok(Self {
-            state: Arc::new(RwLock::new(shadow.state)),
-            file_path: shadow.file_path,
-            file_extension_flags: shadow.file_extension_flags,
-            extension_flags: shadow.extension_flags,
-        })
-    }
-}
-
-// --- Initialization & Configuration ---
 
 impl FlagManager {
-    /// Creates a new, empty `FlagManager`.
+    /// Empty manager with no persistence backend attached.
     pub fn new() -> Self {
         Self {
             state: Arc::new(RwLock::new(Inner::default())),
-            file_path: None,
             file_extension_flags: HashMap::new(),
             extension_flags: HashMap::new(),
+            store: None,
         }
     }
 
-    /// Appends a descriptor directly to a specific file extension mapping.
+    /// Attach a persistence backend.
+    pub fn with_store<S>(mut self, store: S) -> Self
+    where
+        S: FlagStore + 'static,
+    {
+        self.store = Some(Arc::new(store));
+        self
+    }
+
+    /// Replace the persistence backend after construction.
+    pub fn set_store<S>(&mut self, store: S)
+    where
+        S: FlagStore + 'static,
+    {
+        self.store = Some(Arc::new(store));
+    }
+
+    /// Build a manager from a backend's previously persisted state.
+    pub fn from_store<S>(store: S) -> Result<Self, FlagError>
+    where
+        S: FlagStore + 'static,
+    {
+        let store = Arc::new(store);
+        let inner = store.load()?;
+
+        let manager = Self {
+            state: Arc::new(RwLock::new(inner)),
+            file_extension_flags: HashMap::new(),
+            extension_flags: HashMap::new(),
+            store: Some(store),
+        };
+
+        manager.sanitize_masks()?;
+        Ok(manager)
+    }
+
+    /// Snapshot current pure state.
+    pub fn snapshot(&self) -> Result<Inner, FlagError> {
+        let inner = self
+            .state
+            .read()
+            .map_err(|_| FlagError::LockPoisoned)?;
+        Ok(inner.clone())
+    }
+
+    /// Restore from a pure state snapshot.
+    pub fn restore(&self, inner: Inner) -> Result<(), FlagError> {
+        let mut current = self
+            .state
+            .write()
+            .map_err(|_| FlagError::LockPoisoned)?;
+        *current = inner;
+        Ok(())
+    }
+
     pub fn add_extension_flag<S1, S2>(
-        mut self, extension: S1, name: S2, flag_type: FlagType, value: u64
-    ) -> Self where S1: Into<String>, S2: Into<String> {
+        mut self,
+        extension: S1,
+        name: S2,
+        flag_type: FlagType,
+        value: u64,
+    ) -> Self
+    where
+        S1: Into<String>,
+        S2: Into<String>,
+    {
         let descriptor = FlagDescriptor::new(name.into(), flag_type, value, None, None);
+
         self.file_extension_flags
             .entry(extension.into())
             .or_insert_with(Vec::new)
             .push(descriptor);
+
         self
     }
 
-    /// Sets the file path for persistence operations.
-    pub fn with_file_path(mut self, path: impl Into<PathBuf>) -> Self {
-        self.file_path = Some(path.into());
-        self
-    }
-}
-
-// --- Operational Logic ---
-
-impl FlagManager {
-    /// Registers a new flag definition into the manager.
-    /// 
-    /// # Errors
-    /// Returns [`FlagError::FlagAlreadyExists`] if a flag with the same name is already registered.
     pub fn add_flag(
         &self,
         name: &str,
@@ -143,134 +122,261 @@ impl FlagManager {
         description: Option<String>,
         created_at: Option<String>,
     ) -> Result<(), FlagError> {
-        let mut inner = self.state.write().unwrap();
+        let mut inner = self
+            .state
+            .write()
+            .map_err(|_| FlagError::LockPoisoned)?;
+
         if inner.flags.contains_key(name) {
             return Err(FlagError::FlagAlreadyExists);
         }
-        let flag = FlagDescriptor::new(name.to_string(), flag_type, value, description, created_at);
+
+        let flag = FlagDescriptor::new(
+            name.to_string(),
+            flag_type,
+            value,
+            description,
+            created_at,
+        );
+
         inner.flags.insert(name.to_string(), flag);
+        
+        #[cfg(feature = "logging")]
         info!("Registered flag: {}", name);
+
         Ok(())
     }
 
-    /// Activates a specific flag using bitwise OR logic.
-    ///
-    /// # Errors
-    /// Returns [`FlagError::NotFound`] if the flag name has not been registered.
     pub fn set_flag(&self, name: &str) -> Result<(), FlagError> {
-        let mut inner = self.state.write().unwrap();
-        
-        // We must find the definition to know the bit value and type
-        let (val, f_type) = inner.flags.get(name)
+        let mut inner = self
+            .state
+            .write()
+            .map_err(|_| FlagError::LockPoisoned)?;
+
+        let (val, f_type) = inner
+            .flags
+            .get(name)
             .map(|f| (f.value, f.flag_type))
-            .ok_or_else(|| FlagError::NotFound(name.to_string()))?;
+            .ok_or_else(||
+                // FlagError::NotFound(name.to_string())
+                FlagError::NotFound { name: name.to_string() }
+            )?;
 
         match f_type {
             FlagType::Binary => inner.binary_flags |= val as u8,
             FlagType::Hex => inner.hex_flags |= val,
             FlagType::Enum => inner.enum_flags |= val as u8,
         }
+
+        #[cfg(feature = "logging")]
         info!("Set active bit(s) for: {}", name);
+
         Ok(())
     }
 
-    /// Checks if the bits associated with a flag name are currently set.
+    pub fn clear_flag(&self, name: &str) -> Result<(), FlagError> {
+        let mut inner = self
+            .state
+            .write()
+            .map_err(|_| FlagError::LockPoisoned)?;
+
+        let (val, f_type) = inner
+            .flags
+            .get(name)
+            .map(|f| (f.value, f.flag_type))
+            .ok_or_else(||
+                // FlagError::NotFound(name.to_string())
+                FlagError::NotFound { name: name.to_string() }
+            )?;
+        match f_type {
+            FlagType::Binary => inner.binary_flags &= !(val as u8),
+            FlagType::Hex => inner.hex_flags &= !val,
+            FlagType::Enum => inner.enum_flags &= !(val as u8),
+        }
+
+        Ok(())
+    }
+
     pub fn check_flag(&self, name: &str) -> Result<bool, FlagError> {
-        let inner = self.state.read().unwrap();
-        let flag = inner.flags.get(name).ok_or_else(|| FlagError::NotFound(name.to_string()))?;
-        
+        let inner = self
+            .state
+            .read()
+            .map_err(|_| FlagError::LockPoisoned)?;
+
+        let flag = inner
+            .flags
+            .get(name)
+            .ok_or_else(||
+                // FlagError::NotFound(name.to_string())
+                FlagError::NotFound { name: name.to_string() }
+            )?;
         let is_set = match flag.flag_type {
             FlagType::Binary => (inner.binary_flags & flag.value as u8) != 0,
             FlagType::Hex => (inner.hex_flags & flag.value) != 0,
             FlagType::Enum => (inner.enum_flags & flag.value as u8) != 0,
         };
+
         Ok(is_set)
     }
-}
 
-// --- Persistence Logic ---
-
-#[cfg(not(feature = "inner_only"))]
-impl FlagManager {
-    /// Serializes and saves the **entire** manager state to a file.
-    ///
-    /// This includes all bitmasks, flag definitions, and extension mappings.
-    pub fn save_to_file(&self, path: &Path) -> Result<(), FlagError> {
-        // Uses the custom Serialize implementation (via the Shadow struct)
-        let encoded = bincode::serialize(self).map_err(|e| FlagError::NotFound(e.to_string()))?;
-        std::fs::write(path, encoded).map_err(|e| FlagError::NotFound(e.to_string()))?;
-        Ok(())
-    }
-    
-    /// Loads a full `FlagManager` state from a file.
-    pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self, FlagError> {
-        let path_ref = path.as_ref();
-        let data = std::fs::read(path_ref).map_err(|e| FlagError::NotFound(e.to_string()))?;
-        let decoded: Self = bincode::deserialize(&data).map_err(|e| FlagError::NotFound(e.to_string()))?;
-        Ok(decoded)
-    }
-}
-
-#[cfg(feature = "inner_only")]
-impl FlagManager {
-    /// **Data-Only Persistence:** Saves only the bitmasks and descriptors.
-    pub fn save_inner_to_file(&self, path: &Path) -> Result<(), FlagError> {
-        let inner = self.state.read().unwrap();
-        let encoded = bincode::serialize(&*inner)?;
-        std::fs::write(path, encoded)?;
-        Ok(())
+    /// Save current `Inner` through the attached store.
+    pub fn sync(&self) -> Result<(), FlagError> {
+        let store = self.store.as_ref().ok_or(FlagError::NoStoreConfigured)?;
+        let snapshot = self.snapshot()?;
+        store.save(&snapshot)
     }
 
-    /// **Data-Only Persistence:** Loads bitmasks into a fresh manager shell.
-    /// Attempts to load a `FlagManager` state from a file.
-    ///
-    /// If the file is found, it deserializes the `Inner` state and returns 
-    /// a manager configured with that state and the provided path.
-    ///
-    /// # Errors
-    /// Returns `FlagError` if the file is corrupted or unreachable.
-    pub fn load_inner_from_file<P: AsRef<Path>>(path: P) -> Result<Self, FlagError> {
-        let path_ref = path.as_ref();
-        let data = std::fs::read(path_ref)?;
+    /// Reload `Inner` through the attached store.
+    pub fn refresh(&self) -> Result<(), FlagError> {
+        let store = self.store.as_ref().ok_or(FlagError::NoStoreConfigured)?;
+        let loaded = store.load()?;
+        self.restore(loaded)?;
+        self.sanitize_masks()?;
         
-        // Deserialize the Source of Truth
-        let decoded: Inner = bincode::deserialize(&data)?;
+        #[cfg(feature = "logging")]
+        info!("State refreshed from store.");
 
-        Ok(Self {
-            state: Arc::new(RwLock::new(decoded)),
-            file_path: Some(path_ref.to_path_buf()),
+        Ok(())
+    }
+
+    /// Clears any bits that no longer correspond to registered descriptors.
+    pub fn sanitize_masks(&self) -> Result<(), FlagError> {
+        let mut inner = self
+            .state
+            .write()
+            .map_err(|_| FlagError::LockPoisoned)?;
+
+        let mut allowed_binary: u8 = 0;
+        let mut allowed_hex: u64 = 0;
+        let mut allowed_enum: u8 = 0;
+
+        for d in inner.flags.values() {
+            match d.flag_type {
+                FlagType::Binary => allowed_binary |= d.value as u8,
+                FlagType::Hex => allowed_hex |= d.value,
+                FlagType::Enum => allowed_enum |= d.value as u8,
+            }
+        }
+
+        inner.binary_flags &= allowed_binary;
+        inner.hex_flags &= allowed_hex;
+        inner.enum_flags &= allowed_enum;
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+impl FlagManager {
+    pub fn __test_inject_masks(&self, binary: u8, hex: u64, en: u8) {
+        let mut inner = self.state.write().unwrap();
+        inner.binary_flags = binary;
+        inner.hex_flags = hex;
+        inner.enum_flags = en;
+    }
+}
+
+
+
+// impl FlagManager {
+//     /// Attach a pre-built shared store object.
+//     pub fn with_store_arc(mut self, store: Arc<dyn FlagStore>) -> Self {
+//         self.store = Some(store);
+//         self
+//     }
+
+//     /// Builder/internal helper: insert or replace a descriptor definition.
+//     ///
+//     /// This is intentionally separate from `add_flag`, because builders often
+//     /// need "code is authoritative" behavior when merging loaded state with
+//     /// compile-time definitions.
+//     pub(crate) fn upsert_flag_descriptor(
+//         &self,
+//         descriptor: FlagDescriptor<u64>,
+//     ) -> Result<(), FlagError> {
+//         let mut state = self.state.write().map_err(|_| FlagError::LockPoisoned)?;
+//         let key = descriptor.name.clone();
+//         state.snapshot.inner.flags.insert(key, descriptor);
+//         state.dirty = true;
+//         Ok(())
+//     }
+
+//     pub fn from_store_arc(store: Arc<dyn FlagStore>) -> Result<Self, FlagError> {
+//         let mut snapshot = store.load()?;
+//         validate_snapshot_version(&snapshot)?;
+
+//         let changed = sanitize_snapshot_masks(&mut snapshot);
+
+//         Ok(Self {
+//             state: Arc::new(RwLock::new(StateCell {
+//                 snapshot,
+//                 dirty: changed,
+//             })),
+//             file_extension_flags: HashMap::new(),
+//             extension_flags: HashMap::new(),
+//             store: Some(store),
+//         })
+//     }
+// }
+
+
+impl FlagManager {
+    pub fn with_store_arc(mut self, store: Arc<dyn FlagStore>) -> Self {
+        self.store = Some(store);
+        self
+    }
+
+    pub(crate) fn upsert_flag_descriptor(
+        &self,
+        descriptor: FlagDescriptor<u64>,
+    ) -> Result<(), FlagError> {
+        let mut inner = self
+            .state
+            .write()
+            .map_err(|_| FlagError::LockPoisoned)?;
+
+        inner.flags.insert(descriptor.name.clone(), descriptor);
+        Ok(())
+    }
+
+    pub fn from_store_arc(store: Arc<dyn FlagStore>) -> Result<Self, FlagError> {
+        let inner = store.load()?;
+
+        let manager = Self {
+            state: Arc::new(RwLock::new(inner)),
             file_extension_flags: HashMap::new(),
             extension_flags: HashMap::new(),
-        })
+            store: Some(store),
+        };
+
+        manager.sanitize_masks()?;
+        Ok(manager)
     }
 }
 
+
+
+
+#[cfg(feature = "serde")]
+use std::path::{Path, PathBuf};
+
+#[cfg(feature = "serde")]
+use crate::flag_store::BincodeFileFlagStore;
+
+
 impl FlagManager {
-    /// Reloads the internal state of the current manager from its `file_path`.
-    ///
-    /// This is useful if an external process has modified the state file 
-    /// and you need to synchronize.
-    pub fn refresh(&self) -> Result<(), FlagError> {
-        if let Some(ref path) = self.file_path {
-            let fresh = Self::load_from_file(path)?;
-            let mut inner = self.state.write().unwrap();
-            let fresh_inner = fresh.state.read().unwrap();
-            *inner = fresh_inner.clone();
-            info!("State refreshed from disk.");
-            Ok(())
-        } else {
-            Err(FlagError::NotFound("no path provided".to_string()))
-        }
+    #[cfg(feature = "serde")]
+    pub fn with_file_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.store = Some(Arc::new(BincodeFileFlagStore::new(path)));
+        self
     }
 
-    /// Saves the current state to the pre-configured `file_path`.
-    /// 
-    /// Returns an error if `file_path` was never set.
     pub fn sync_to_disk(&self) -> Result<(), FlagError> {
-        if let Some(ref path) = self.file_path {
-            self.save_to_file(path)
-        } else {
-            Err(FlagError::NotFound("no path provided".to_string()))
-        }
+        self.sync()
+    }
+
+    #[cfg(feature = "serde")]
+    pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self, FlagError> {
+        Self::from_store(BincodeFileFlagStore::new(path.as_ref().to_path_buf()))
     }
 }

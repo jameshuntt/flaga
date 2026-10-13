@@ -23,12 +23,17 @@ pub struct FeatureManager {
     /// Internal storage mapping unique names to heap-allocated feature objects.
     features: HashMap<&'static str, Box<dyn Feature>>,
 }
-
+impl Default for FeatureManager {
+    fn default() -> Self {
+        Self { features: Default::default() }
+    }
+}
 impl FeatureManager {
     /// Initializes a new, empty `FeatureManager`.
     ///
     /// # Example
     /// ```
+    /// use flaga::FeatureManager;
     /// let manager = FeatureManager::new();
     /// ```
     pub fn new() -> Self {

@@ -1,3 +1,4 @@
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
 /// `FlagType` defines the mathematical and logical category of a flag.
@@ -6,7 +7,9 @@ use serde::{Deserialize, Serialize};
 /// as a simple boolean toggle, a complex 64-bit hex mask, or a 
 /// restricted set of enumerable states.
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+// #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum FlagType {
     /// **Binary Flags (u8):** /// Used for simple "On/Off" toggles. 
     /// Ideal for features that are either enabled or disabled (e.g., `is_active`).

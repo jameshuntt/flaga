@@ -1,3 +1,5 @@
+extern crate alloc;
+
 // --- Core Modules ---
 // These modules define the fundamental data structures and logic.
 pub mod enum_flag_counter;   // Enum-based bitmask logic
@@ -31,4 +33,12 @@ pub mod flag_types;
 // --- Re-exports ---
 // Exposes serde to the rest of the crate to ensure macro-generated 
 // code has access to serialization traits.
+// pub use serde;
+#[cfg(feature = "serde")]
 pub use serde;
+
+
+pub mod state;
+pub mod flag_store;
+
+pub mod core;

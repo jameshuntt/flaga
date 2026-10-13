@@ -1,121 +1,179 @@
-use std::{
-    collections::HashMap,
-    path::PathBuf,
-    sync::{Arc, RwLock}
-};
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use crate::{
-    flag_descriptor::FlagDescriptor, 
-    flag_manager::{FlagManager, Inner}, 
-    flag_type::FlagType
+    error::FlagError,
+    flag_descriptor::FlagDescriptor,
+    flag_manager::FlagManager,
+    flag_store::FlagStore,
+    flag_type::FlagType,
 };
 
-/// A builder for constructing a [`FlagManager`] with optional persistence support.
-/// 
-/// This builder implements a "Load-or-Create" strategy. If a file path is provided 
-/// and the file exists, it will attempt to restore the state from disk. Otherwise, 
-/// it initializes a fresh manager with the provided flag definitions.
+#[cfg(feature = "serde")]
+use crate::flag_store::BincodeFileFlagStore;
+
+/// Builder for constructing a [`FlagManager`] with optional persistence.
+///
+/// This builder supports two modes:
+///
+/// 1. Fresh manager construction
+/// 2. Load-or-default construction from a configured store
+///
+/// Code-defined descriptors are merged into the manager after load, with
+/// builder-supplied definitions taking precedence on name collision.
 pub struct FlagManagerBuilder {
-    /// Temporary storage for flag descriptors before the manager is finalized.
-    /// Internal collection of flag descriptors.
+    /// Code-defined descriptor set.
     flags: HashMap<String, FlagDescriptor<u64>>,
-    /// Path used for persistence if file-backed storage is required.
-    file_path: Option<PathBuf>,
+
+    /// Optional persistence backend.
+    store: Option<Arc<dyn FlagStore>>,
+
+    /// If true, attempt to load from the configured store before merging flags.
+    load_from_store: bool,
 }
 
 impl Default for FlagManagerBuilder {
-    /// Provides a default, empty builder state.
     fn default() -> Self {
         Self::new()
     }
 }
 
 impl FlagManagerBuilder {
-    /// Creates a new `FlagManagerBuilder` with empty defaults.
+    /// Creates a new empty builder.
     pub fn new() -> Self {
         Self {
             flags: HashMap::new(),
-            file_path: None,
+            store: None,
+            load_from_store: false,
         }
     }
 
-    /// Configures a file path for the manager to use for I/O operations.
-    ///
-    /// # Arguments
-    /// * `file` - The path to the configuration or state file.
-    pub fn with_file(mut self, file: PathBuf) -> Self {
-        self.file_path = Some(file);
+    /// Attach a concrete store backend.
+    pub fn with_store<S>(mut self, store: S) -> Self
+    where
+        S: FlagStore + 'static,
+    {
+        self.store = Some(Arc::new(store));
         self
     }
 
-    /// Adds a new flag definition to the manager.
+    /// Attach a shared store backend.
+    pub fn with_store_arc(mut self, store: Arc<dyn FlagStore>) -> Self {
+        self.store = Some(store);
+        self
+    }
+
+    /// Convenience: use a bincode file-backed store.
+    #[cfg(feature = "serde")]
+    pub fn with_file(mut self, file: impl Into<PathBuf>) -> Self {
+        self.store = Some(Arc::new(BincodeFileFlagStore::new(file)));
+        self
+    }
+
+    /// Configure the builder to load existing persisted state if a store exists.
     ///
-    /// This method is polymorphic over the name, accepting both `String` 
-    /// and `&str` for convenience.
-    ///
-    /// # Arguments
-    /// * `name` - The unique identifier for this flag.
-    /// * `flag_type` - The categorization of the flag (Binary, Hex, Enum).
-    /// * `value` - The initial value to be assigned to this flag.
-    pub fn add_flag(mut self, name: impl Into<String>, flag_type: FlagType, value: u64) -> Self {
-        let name_str = name.into();
-        let descriptor = FlagDescriptor::with_defaults(name_str.clone(), flag_type, value);
-        self.flags.insert(name_str, descriptor);
+    /// For file-backed stores, missing files should generally resolve to a default
+    /// empty snapshot at the store layer.
+    pub fn load_or_default(mut self) -> Self {
+        self.load_from_store = true;
+        self
+    }
+
+    /// Add a simple flag descriptor with default metadata.
+    pub fn add_flag(
+        mut self,
+        name: impl Into<String>,
+        flag_type: FlagType,
+        value: u64,
+    ) -> Self {
+        let name = name.into();
+        let descriptor = FlagDescriptor::with_defaults(name.clone(), flag_type, value);
+        self.flags.insert(name, descriptor);
+        self
+    }
+
+    /// Add a fully specified descriptor.
+    pub fn add_flag_full(
+        mut self,
+        name: impl Into<String>,
+        flag_type: FlagType,
+        value: u64,
+        description: Option<String>,
+        created_at: Option<String>,
+    ) -> Self {
+        let name = name.into();
+        let descriptor = FlagDescriptor::new(
+            name.clone(),
+            flag_type,
+            value,
+            description,
+            created_at,
+        );
+        self.flags.insert(name, descriptor);
+        self
+    }
+
+    /// Add a prebuilt descriptor directly.
+    pub fn add_descriptor(mut self, descriptor: FlagDescriptor<u64>) -> Self {
+        self.flags.insert(descriptor.name.clone(), descriptor);
         self
     }
 }
 
 impl FlagManagerBuilder {
-    /// Creates a fresh [`FlagManager`] ignoring any existing disk state.
+    /// Build a fresh manager shell without loading persisted state.
     ///
-    /// This is used internally by [`Self::build`] as a fallback, but can be called 
-    /// directly if you want to explicitly bypass loading from a file.
-    ///
-    /// # Returns
-    /// A new [`FlagManager`] with empty bitmasks and the builder's configured flags.
-    pub fn build_new_manager(self) -> FlagManager {
-        FlagManager {
-            file_path: self.file_path,
-            file_extension_flags: HashMap::new(),
-            extension_flags: HashMap::new(),
-            // Arc allows shared ownership; RwLock allows multiple readers OR one writer.
-            state: Arc::new(RwLock::new(Inner {
-                binary_flags: 0,
-                hex_flags: 0,
-                enum_flags: 0,
-                flags: self.flags,
-            })),
+    /// Attached store is preserved, but no load is attempted.
+    pub fn build_new_manager(self) -> Result<FlagManager, FlagError> {
+        let mut manager = FlagManager::new();
+
+        if let Some(store) = self.store {
+            manager = manager.with_store_arc(store);
         }
+
+        for descriptor in self.flags.into_values() {
+            manager.upsert_flag_descriptor(descriptor)?;
+        }
+
+        // Fresh managers should still be normalized.
+        manager.sanitize_masks()?;
+        Ok(manager)
     }
 
-    /// Finalizes the `FlagManager` using a "smart-load" strategy.
+    /// Finalize the manager.
     ///
-    /// **Execution Steps:**
-    /// 1. **Check Persistence:** If `file_path` is set and the file exists on disk...
-    /// 2. **Attempt Load:** Try to deserialize the existing [`Inner`] state.
-    /// 3. **Merge State:** If load succeeds, merge the code-defined flags into the loaded definitions.
-    /// 4. **Fallback:** If any step fails or no file exists, call [`Self::build_new_manager`].
-    pub fn build(self) -> FlagManager {
-        // Attempt to load existing state if file exists
-        if let Some(ref path) = self.file_path {
-            if path.exists() {
-                if let Ok(manager) = FlagManager::load_from_file(path) {
-                    // Update the manager's path in case the file was moved
-                    let mut final_manager = manager;
-                    final_manager.file_path = self.file_path.clone();
-                    
-                    // Merge builder flags (newly defined in code) into the persistent state
-                    let mut inner = final_manager.state.write().unwrap();
-                    inner.flags.extend(self.flags);
-                    
-                    // Release lock and return the manager
-                    drop(inner);
-                    return final_manager;
-                }
-            }
+    /// Behavior:
+    /// - if `load_or_default()` was set and a store exists:
+    ///   - load persisted snapshot
+    ///   - persisted-only sanitize has already happened in `from_store_arc`
+    /// - merge code-defined descriptors into loaded/fresh state
+    /// - sanitize again against the merged descriptor set
+    ///
+    /// Builder descriptors are authoritative on name collision.
+    pub fn build(self) -> Result<FlagManager, FlagError> {
+        let FlagManagerBuilder {
+            flags,
+            store,
+            load_from_store,
+        } = self;
+
+        let manager = match (load_from_store, store.clone()) {
+            (true, Some(store)) => FlagManager::from_store_arc(store)?,
+            (_, Some(store)) => FlagManager::new().with_store_arc(store),
+            (_, None) => FlagManager::new(),
+        };
+
+        // Merge compile-time / code-defined descriptors after load.
+        // This allows new deployments to introduce new flags or replace
+        // existing definitions intentionally.
+        for descriptor in flags.into_values() {
+            manager.upsert_flag_descriptor(descriptor)?;
         }
-        
-        // No file found or load failed: create from scratch
-        self.build_new_manager()
+
+        // Important:
+        // - load path already sanitized stale persisted bits against the old registry
+        // - after merge, sanitize again against the merged/authoritative registry
+        manager.sanitize_masks()?;
+
+        Ok(manager)
     }
 }

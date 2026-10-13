@@ -10,7 +10,11 @@ pub struct FlagParser {
     /// are the actual bitmask wrappers (`ModuleFlags`).
     pub module_flags: HashMap<String, ModuleFlags>,
 }
-
+impl Default for FlagParser {
+    fn default() -> Self {
+        Self { module_flags: Default::default() }
+    }
+}
 impl FlagParser {
     /// Initializes a fresh parser with an empty registry.
     pub fn new() -> Self {
