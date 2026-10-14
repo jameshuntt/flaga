@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use crate::{flag::Flag, module_flag::ModuleFlags};
+use alloc::{string::{String, ToString}, vec::Vec};
 
 /// `FlagParser` acts as the central engine for interpreting and evaluating bit-based flags.
 ///

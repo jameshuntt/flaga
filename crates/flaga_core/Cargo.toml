@@ -1,0 +1,24 @@
+[package]
+name = "flaga_core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Core flag types for flaga: the Flag trait, binary/hex/enum flag containers, descriptors, groups, the flag parser, persisted state, macros and FlagError. no_std with alloc."
+readme = "README.md"
+
+[features]
+default = ["std"]
+std = ["liaise/std", "serde?/std"]
+serde = ["dep:serde"]
+json = ["serde", "dep:serde_json"]
+bincode = ["serde", "dep:bincode"]
+
+[dependencies]
+serde = { version = "1.0.219", default-features = false, features = ["derive", "alloc"], optional = true }
+serde_json = { version = "1.0.140", optional = true }
+liaise = { version = "0.2.3", default-features = false }
+bincode = { version = "1.3.3", optional = true }

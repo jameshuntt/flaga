@@ -5,7 +5,7 @@
 pub trait Flag {
     /// The associated type representing the numeric or bitwise container.
     /// It must implement `Copy` (for easy passing) and `Debug` (for logging).
-    type Value: Copy + std::fmt::Debug;
+    type Value: Copy + core::fmt::Debug;
 
     /// Activates a specific bit or state within the flag container.
     /// Usually maps to a bitwise OR (`|=`) operation.

@@ -1,8 +1,8 @@
 
-use crate::{
+use crate::flag_store::FlagStore;
+use flaga_core::{
     error::FlagError,
     flag_descriptor::FlagDescriptor,
-    flag_store::FlagStore,
     flag_type::FlagType,
     state::Inner,
 };

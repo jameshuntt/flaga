@@ -1,0 +1,37 @@
+[package]
+name = "flaga"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Flag management engine with support for binary, hex, and enum flags, event triggering, and persistent flag schemas."
+readme = "README.md"
+
+[features]
+default = ["serde", "bincode", "std"]
+serde = ["flaga_core/serde", "flaga_store/serde"]
+json = ["flaga_store/json"]
+bincode = ["flaga_store/bincode"]
+inner_only = ["flaga_store/inner_only"]
+logging = ["flaga_store/logging"]
+std = ["flaga_core/std", "flaga_store/std"]
+
+[[bench]]
+name = "flagger_bench"
+harness = false
+
+[dependencies]
+flaga_core = { path = "../flaga_core", version = "0.3.0", default-features = false }
+flaga_events = { path = "../flaga_events", version = "0.3.0" }
+flaga_store = { path = "../flaga_store", version = "0.3.0", default-features = false }
+
+[dev-dependencies]
+rand = "0.8"
+tempfile = "3"
+proptest = "1"
+criterion = "0.5"
+crossbeam = "0.8"
+scope = " 0.1.3"

@@ -104,3 +104,18 @@ Flagger supports two modes of saving:
 
 ## ⚖️ License
 This project is licensed under the MIT License - see the `LICENSE` file for details.
+
+---
+
+## Crates
+
+Since 0.3.0 flaga is a small workspace. `flaga` is the facade: it re-exports every module under its 0.2.0 path, so `flaga::prelude::*`, `flaga::error::FlagError`, `flaga::flag_manager::FlagManager` and the `flaga::impl_flag_trait!` macros keep working.
+
+| Crate | Holds |
+| :--- | :--- |
+| `flaga` | The facade. Re-exports the three crates below and the `prelude`. |
+| `flaga_core` | `flag`, `flag_type`, `flag_types`, `flag_descriptor`, `flag_group`, `module_flag`, `enum_flag_counter`, `flag_parser`, `state`, `macros`, `macros_prelude`, `error`. `no_std` + `alloc`; `std` feature on by default. |
+| `flaga_events` | `flag_event`, `flag_event_manager`, `flag_trigger`, `features`. |
+| `flaga_store` | `flag_store`, `flag_manager`, `flag_manager_builder`. std only. |
+
+The `flaga_solver` crate is not wired in yet; a `solver` feature on `flaga` comes in 0.3.1.

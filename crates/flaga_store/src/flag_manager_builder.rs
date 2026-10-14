@@ -1,10 +1,12 @@
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use crate::{
-    error::FlagError,
-    flag_descriptor::FlagDescriptor,
     flag_manager::FlagManager,
     flag_store::FlagStore,
+};
+use flaga_core::{
+    error::FlagError,
+    flag_descriptor::FlagDescriptor,
     flag_type::FlagType,
 };
 

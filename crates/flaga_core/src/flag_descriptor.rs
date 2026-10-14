@@ -1,4 +1,5 @@
 use crate::impl_descriptor;
+use alloc::string::String;
 
 // --- Dynamic Descriptor ---
 // Uses `String`, meaning names can be created at runtime (e.g., from a database).

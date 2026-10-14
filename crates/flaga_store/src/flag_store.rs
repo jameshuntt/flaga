@@ -1,5 +1,5 @@
 
-use crate::{error::FlagError, state::Inner};
+use flaga_core::{error::FlagError, state::Inner};
 use std::{
     fmt::Debug,
     path::{Path, PathBuf},

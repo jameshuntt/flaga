@@ -1,0 +1,27 @@
+[package]
+name = "flaga_store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Persistence and management layer for flaga: FlagStore backends, the thread-safe FlagManager and FlagManagerBuilder."
+readme = "README.md"
+
+[features]
+default = ["serde", "bincode", "std"]
+serde = ["flaga_core/serde"]
+json = ["serde", "dep:serde_json", "flaga_core/json"]
+bincode = ["serde", "dep:bincode", "flaga_core/bincode"]
+# inner_only = []
+inner_only = ["bincode"]
+logging = ["dep:log"]
+std = ["flaga_core/std"]
+
+[dependencies]
+flaga_core = { path = "../flaga_core", version = "0.3.0", default-features = false, features = ["std"] }
+serde_json = { version = "1.0.140", optional = true }
+log = { version = "0.4.26", optional = true }
+bincode = { version = "1.3.3", optional = true }

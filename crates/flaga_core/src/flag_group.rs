@@ -1,4 +1,5 @@
 use crate::flag::Flag;
+use alloc::vec::Vec;
 
 /// A collection of items that implement the [`Flag`] trait.
 ///

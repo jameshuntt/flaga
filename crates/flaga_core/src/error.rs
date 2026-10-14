@@ -1,4 +1,5 @@
 use liaise::{Liaise, LiaiseCodes};
+use alloc::string::String;
 #[derive(LiaiseCodes, Debug)]
 #[liaise(prefix = "FLAG")]
 pub enum FlagError {

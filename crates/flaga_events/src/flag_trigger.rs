@@ -1,4 +1,4 @@
-use crate::flag::Flag;
+use flaga_core::flag::Flag;
 
 /// `FlagTrigger` is a functional wrapper that associates flag states with executable actions.
 ///

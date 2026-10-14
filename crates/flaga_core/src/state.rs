@@ -1,5 +1,6 @@
 use crate::flag_descriptor::FlagDescriptor;
 use std::collections::HashMap;
+use alloc::string::String;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};

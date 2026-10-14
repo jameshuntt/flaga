@@ -33,7 +33,7 @@ impl FeatureManager {
     ///
     /// # Example
     /// ```
-    /// use flaga::FeatureManager;
+    /// use flaga_events::features::FeatureManager;
     /// let manager = FeatureManager::new();
     /// ```
     pub fn new() -> Self {

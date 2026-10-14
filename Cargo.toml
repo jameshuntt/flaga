@@ -1,44 +1,12 @@
-[package]
-name = "flaga"
-version = "0.2.0"
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.3.0"
 edition = "2024"
-
 license = "MIT OR Apache-2.0"
-description = "Flag management engine with support for binary, hex, and enum flags, event triggering, and persistent flag schemas."
-
-authors = ["James Hunt <jameshuntdevelopment@gmail.com>"]
+authors = ["James Hunt"]
 repository = "https://github.com/jameshuntt/flaga"
-readme = "readme.md"
-
 keywords = ["flags", "bitflags", "state", "event", "binary"]
 categories = ["config", "data-structures", "parser-implementations"]
-
-[features]
-default = ["serde", "bincode", "std"]
-serde = ["dep:serde"]
-json = ["serde", "dep:serde_json"]
-bincode = ["serde", "dep:bincode"]
-# inner_only = []
-inner_only = ["bincode"]
-logging = ["dep:log"]
-std = ["liaise/std"]
-
-[[bench]]
-name = "flagger_bench"
-harness = false
-
-[dependencies]
-serde = { version = "1.0.219", features = ["derive"], optional = true }
-serde_json = { version = "1.0.140", optional = true }
-# thiserror = "2.0.12"
-liaise = { version = "0.2.3", default-features = false }
-log = { version = "0.4.26", optional = true }
-bincode = { version = "1.3.3", optional = true }
-
-[dev-dependencies]
-rand = "0.8"
-tempfile = "3"
-proptest = "1"
-criterion = "0.5"
-crossbeam = "0.8"
-scope = " 0.1.3"
