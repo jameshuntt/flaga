@@ -117,5 +117,4 @@ Since 0.3.0 flaga is a small workspace. `flaga` is the facade: it re-exports eve
 | `flaga_core` | `flag`, `flag_type`, `flag_types`, `flag_descriptor`, `flag_group`, `module_flag`, `enum_flag_counter`, `flag_parser`, `state`, `macros`, `macros_prelude`, `error`. `no_std` + `alloc`; `std` feature on by default. |
 | `flaga_events` | `flag_event`, `flag_event_manager`, `flag_trigger`, `features`. |
 | `flaga_store` | `flag_store`, `flag_manager`, `flag_manager_builder`. std only. |
-
-The `flaga_solver` crate is not wired in yet; a `solver` feature on `flaga` comes in 0.3.1.
+| `flaga_solver` | flaga_solver, optional, feature `solver`. Re-exported as `flaga::solver`. |

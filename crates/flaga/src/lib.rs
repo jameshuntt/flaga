@@ -50,3 +50,11 @@ pub use flaga_core::{
 // --- Re-exports ---
 #[cfg(feature = "serde")]
 pub use flaga_core::serde;
+
+// --- Solver (optional) ---
+/// The `flaga_solver` crate, behind the `solver` feature: checks a
+/// `big-bad-bool` packed word against its schema (reserved, invalid, requires,
+/// conflicts, deprecated) and against allow/deny policy words, with a reason
+/// for every refusal.
+#[cfg(feature = "solver")]
+pub use flaga_solver as solver;
